@@ -93,6 +93,6 @@ def start(cookie):
                 time.sleep(20)
 
 if __name__ == "__main__":
-    # os.environ["GGPT_COOKIE"] = "c_secure_uid=MTI1MjM%3D;c_secure_pass=b5c63c478816a21f7f2ea875227f1b73;c_secure_ssl=eWVhaA%3D%3D;c_secure_tracker_ssl=eWVhaA%3D%3D;c_secure_login=bm9wZQ%3D%3D"  # 防止gitpython卡死
+    # os.environ["GGPT_COOKIE"] = "xxx"
     cookie = os.getenv("GGPT_COOKIE")
     start(cookie)
