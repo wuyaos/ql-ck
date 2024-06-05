@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 cron: 0 10 0 * * *
-new Env('ICC2022');
+new Env('GGPT');
 """
 
 import json
