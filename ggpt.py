@@ -5,7 +5,6 @@ new Env('GGPT');
 """
 
 import json
-from sendNotify import send  # 调试
 from notify import send  # 导入青龙后自动有这个文件
 import requests
 import re
@@ -13,6 +12,9 @@ import os
 import sys
 import time
 requests.packages.urllib3.disable_warnings()
+
+# def send(a,b):
+#     pass
 
 def start(cookie):
     max_retries = 3
@@ -46,7 +48,7 @@ def start(cookie):
             if "这是您的第" in rsp_text:
                 msg += '签到成功!\n'
                 # 先匹配当前魔力值信息
-                magic_value = re.search(r"魔力值.*?(\d+(\,\d+)?(\.\d+)?)", rsp_text).group(1).replace(',', '')
+                magic_value = re.search(r"G值.*?(\d+(\,\d+)?(\.\d+)?)", rsp_text).group(1).replace(',', '')
                 msg = msg + "当前魔力值为: " + magic_value + " 。"
                 # 匹配当前签到提示
                 pattern = r'这是您的第 <b>(\d+)</b>[\s\S]*?今日签到排名：<b>(\d+)</b>'
@@ -91,5 +93,6 @@ def start(cookie):
                 time.sleep(20)
 
 if __name__ == "__main__":
+    # os.environ["GGPT_COOKIE"] = "c_secure_uid=MTI1MjM%3D;c_secure_pass=b5c63c478816a21f7f2ea875227f1b73;c_secure_ssl=eWVhaA%3D%3D;c_secure_tracker_ssl=eWVhaA%3D%3D;c_secure_login=bm9wZQ%3D%3D"  # 防止gitpython卡死
     cookie = os.getenv("GGPT_COOKIE")
     start(cookie)
