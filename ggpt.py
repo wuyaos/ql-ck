@@ -69,11 +69,11 @@ def start(cookie):
             
             if success:
                 print("签到结果: ",msg)
-                send("ICC2022 签到结果", msg)
+                send("GGPT 签到结果", msg)
                 break  # 成功执行签到，跳出循环
             elif retries >= max_retries:
                 print("达到最大重试次数，签到失败。")
-                send("ICC2022 签到结果", msg)
+                send("GGPT 签到结果", msg)
                 break
             else:
                 retries += 1
@@ -81,7 +81,7 @@ def start(cookie):
                 time.sleep(20)
         except Exception as e:
             print("签到失败，失败原因:"+str(e))
-            send("ICC2022 签到结果", str(e))
+            send("GGPT 签到结果", str(e))
             retries += 1
             if retries >= max_retries:
                 print("达到最大重试次数，签到失败。")
