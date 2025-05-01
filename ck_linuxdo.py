@@ -54,11 +54,45 @@ LOGIN_URL = "https://linux.do/login"
 
 class LinuxDoBrowser:
     def __init__(self) -> None:
+        # 检查Playwright是否需要安装
+        self._check_playwright_installation()
+        
         self.pw = sync_playwright().start()
         self.browser = self.pw.firefox.launch(headless=True, timeout=30000)
         self.context = self.browser.new_context()
         self.page = self.context.new_page()
         self.page.goto(HOME_URL)
+    
+    def _check_playwright_installation(self):
+        """检查Playwright是否需要安装或更新"""
+        try:
+            import subprocess
+            import sys
+            
+            # 尝试导入playwright，这可能会触发提示信息
+            result = subprocess.run(
+                [sys.executable, "-c", "from playwright.sync_api import sync_playwright; sync_playwright()"],
+                capture_output=True,
+                text=True
+            )
+            
+            # 检查输出中是否包含安装或更新提示
+            if "Looks like Playwright was just installed or updated" in result.stderr:
+                logger.info("检测到Playwright需要安装或更新浏览器")
+                # 执行playwright install命令
+                install_result = subprocess.run(
+                    ["playwright", "install", "firefox"],
+                    capture_output=True,
+                    text=True
+                )
+                logger.info(f"Playwright浏览器安装结果: {install_result.stdout}")
+                if install_result.stderr:
+                    logger.warning(f"Playwright安装警告: {install_result.stderr}")
+            else:
+                logger.info("Playwright浏览器已正确安装")
+                
+        except Exception as e:
+            logger.error(f"检查Playwright安装时出错: {str(e)}")
 
     def login(self):
         logger.info("开始登录")
