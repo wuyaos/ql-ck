@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 cron: 0 10 0 * * *
-new Env('GGPT');
+new Env('GGPT签到');
 """
 
 import json
