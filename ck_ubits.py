@@ -4,10 +4,8 @@ cron: 0 10 0 * * *
 new Env('piggo');
 """
 
-import json
 import os
 import re
-import sys
 import time
 
 # from notify import send  # 导入青龙后自动有这个文件
