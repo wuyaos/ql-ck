@@ -86,6 +86,7 @@ if __name__ == "__main__":
     try:
         log += EnShan(cookie_EnShan).main()
     except Exception as e:
+        log += f"处理时发生错误: {str(e)}\n"
         print(f"处理时发生错误: {str(e)}")
     msg += log + "\n\n"
 
