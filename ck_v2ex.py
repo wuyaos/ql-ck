@@ -13,7 +13,7 @@ import sys
 from notify import send  # 导入青龙后自动有这个文件
 
 
-cookie = os.environ.get('V2EX_COOKIE').strip()
+cookie = os.environ.get('V2EX_COOKIE')
 # Initial the message time
 time = datetime.now() + timedelta(hours=8)
 message = time.strftime("%Y/%m/%d %H:%M:%S") + " from V2EX \n"
