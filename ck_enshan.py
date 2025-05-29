@@ -2,8 +2,7 @@
 new Env('恩山论坛签到')
 cron: 1 0 * * *
 Author       : BNDou
-Description  : 添加环境变量COOKIE_ENSHAN，多账号用 回车 或 && 分开
-    测试cookie只需要 rHEX_2132_saltkey 和 rHEX_2132_auth 这俩值，如果报错，试试复制全部cookie
+Description  : 添加环境变量COOKIE_ENSHAN
 '''
 # copy from https://github.com/BNDou/Auto_Check_In/blob/main/checkIn_EnShan.py
 import os
@@ -24,7 +23,7 @@ def get_env():
     # 判断 COOKIE_ENSHAN是否存在于环境变量
     if "COOKIE_ENSHAN" in os.environ:
         # 读取系统变量以 \n 或 && 分割变量
-        cookie_list = re.split('\n|&&', os.environ.get('COOKIE_ENSHAN'))
+        cookie = os.environ.get('COOKIE_ENSHAN')
     else:
         # 标准日志输出
         print('未添加COOKIE_ENSHAN变量')
@@ -32,7 +31,7 @@ def get_env():
         # 脚本退出
         sys.exit(0)
 
-    return cookie_list
+    return cookie
 
 
 class EnShan:
@@ -82,18 +81,13 @@ if __name__ == "__main__":
 
     msg, cookie_EnShan = "", get_env()
 
-    i = 0
-    while i < len(cookie_EnShan):
-        log = f"第 {i + 1} 个账号开始执行任务\n"
-        try:
-            log += EnShan(cookie_EnShan[i]).main()
-        except Exception as e:
-            print(f"第 {i + 1} 个账号 处理时发生错误: {str(e)}")
-            print("继续处理下一个账号...")
-            continue
-        msg += log + "\n\n"
-        # print(log)
-        i += 1
+
+    log = f"恩山论坛开始尝试签到\n"
+    try:
+        log += EnShan(cookie_EnShan).main()
+    except Exception as e:
+        print(f"处理时发生错误: {str(e)}")
+    msg += log + "\n\n"
 
     try:
         send('恩山论坛签到', msg)
