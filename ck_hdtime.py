@@ -4,7 +4,7 @@ cron: 0 10 0 * * *
 new Env('HDtime签到');
 """
 
-# from notify import send  # 导入青龙后自动有这个文件
+from notify import send  # 导入青龙后自动有这个文件
 import requests
 import re
 import os
@@ -12,8 +12,8 @@ import time
 
 requests.packages.urllib3.disable_warnings()
 
-def send(a,b):
-    pass
+# def send(a,b):
+#     pass
 
 
 def start(cookie):
