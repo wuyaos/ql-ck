@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-cron: 0 10 0 * * *
+cron: 0 10,16,22 * * *
 new Env('PT多站签到');
 """
 
@@ -12,6 +12,11 @@ import json
 import urllib3
 from loguru import logger
 import sys
+import sqlite3
+from datetime import datetime
+
+# 数据库文件名
+DB_FILE = "checkin_status.db"
 
 # 禁用SSL警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -24,6 +29,59 @@ log_format = (
     "<level>{message}</level>"
 )
 logger.add(sys.stdout, format=log_format)
+
+
+def init_db():
+    """初始化数据库和表"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS checkin_log (
+                site_name TEXT PRIMARY KEY,
+                last_checkin_date TEXT
+            )
+        ''')
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"❌ 数据库初始化失败: {e}")
+
+
+def check_if_signed_today(site_name):
+    """检查今天是否已经签到过"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        sql = "SELECT last_checkin_date FROM checkin_log WHERE site_name = ?"
+        cursor.execute(sql, (site_name,))
+        result = cursor.fetchone()
+        conn.close()
+        if result:
+            last_date_str = result[0]
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            if last_date_str == today_str:
+                return True
+    except Exception as e:
+        logger.error(f"❌ 查询签到状态失败 for {site_name}: {e}")
+    return False
+
+
+def record_signin(site_name):
+    """记录签到成功"""
+    try:
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        sql = (
+            "REPLACE INTO checkin_log (site_name, last_checkin_date) "
+            "VALUES (?, ?)"
+        )
+        cursor.execute(sql, (site_name, today_str))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"❌ 记录签到状态失败 for {site_name}: {e}")
 
 
 # 通知服务
@@ -131,6 +189,7 @@ def sign_in(site_config, cookie):
 
             if "这是您的第" in rsp_text:
                 msg += '🎉 签到成功! '
+                record_signin(site_name)
 
                 magic_keyword = site_config["magic_keyword"]
                 magic_pattern = rf"{magic_keyword}.*?(\d+(?:,\d+)*(?:\.\d+)?)"
@@ -194,26 +253,71 @@ def sign_in(site_config, cookie):
 
 def format_and_send_notification(results):
     """
-    格式化签到结果为Markdown表格并发送通知
+    格式化签到结果为纯文本表格并发送通知
     :param results: 签到结果列表
     """
     if not results:
         logger.info("没有签到结果，无需发送通知。")
         return
 
-    markdown_content = "| 站点 | 状态 | 详情 |\n| :--- | :--- | :--- |\n"
-    for res in results:
-        markdown_content += (
-            f"| {res['site']} | {res['status']} | {res['message']} |\n"
+    header = {'site': '站点', 'status': '状态', 'message': '详情'}
+    
+    # 过滤掉None的结果
+    valid_results = [res for res in results if res is not None]
+    if not valid_results:
+        logger.info("所有任务均已跳过，无需发送通知。")
+        return
+
+    # 准备用于计算宽度的数据
+    data_for_width_calc = [header] + valid_results
+
+    # 计算每列的最大宽度
+    col_widths = {key: 0 for key in header}
+    for item in data_for_width_calc:
+        for key in header:
+            # 使用len()计算字符数
+            length = len(str(item.get(key, '')))
+            if length > col_widths[key]:
+                col_widths[key] = length
+
+    # 构建纯文本内容
+    content_lines = []
+
+    # 标题行
+    header_line = (
+        f"{header['site'].ljust(col_widths['site'])}   "
+        f"{header['status'].ljust(col_widths['status'])}   "
+        f"{header['message'].ljust(col_widths['message'])}"
+    )
+    content_lines.append(header_line)
+
+    # 分隔线
+    separator = (
+        f"{'-' * col_widths['site']}   "
+        f"{'-' * col_widths['status']}   "
+        f"{'-' * col_widths['message']}"
+    )
+    content_lines.append(separator)
+
+    # 数据行
+    for res in valid_results:
+        line = (
+            f"{str(res['site']).ljust(col_widths['site'])}   "
+            f"{str(res['status']).ljust(col_widths['status'])}   "
+            f"{str(res['message']).ljust(col_widths['message'])}"
         )
+        content_lines.append(line)
+
+    plain_text_content = "\n".join(content_lines)
 
     logger.info("准备发送汇总通知...")
-    send("PT多站签到报告", markdown_content)
+    send("PT多站签到报告", plain_text_content)
     logger.info("汇总通知已发送。")
 
 
 def main():
     logger.info("===== 开始执行PT站签到任务 =====")
+    init_db()  # 初始化数据库
     all_cookies = get_cookies_from_env()
 
     if not all_cookies:
@@ -223,6 +327,17 @@ def main():
     results = []
     for site in SITES_CONFIG:
         site_name = site["name"]
+        
+        if check_if_signed_today(site_name):
+            msg = "今日已成功签到，跳过。"
+            logger.info(f"🟢 [{site_name}] {msg}")
+            results.append({
+                'site': site_name,
+                'status': '🟢 跳过',
+                'message': msg
+            })
+            continue
+
         if site_name in all_cookies:
             cookie = all_cookies[site_name]
             result = sign_in(site, cookie)
