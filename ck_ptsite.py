@@ -37,11 +37,6 @@ except ImportError:
 
 
 # PT站点配置
-# 每個站點的配置:
-#   - name: 站點名稱 (用於日誌和通知)
-#   - sign_in_url: 簽到頁面URL
-#   - magic_keyword: 用於提取魔力值的關鍵字 (例如, 'G值', '魔力值')
-#   - headers: 該站點特定的請求頭
 SITES_CONFIG = [
     {
         "name": "GGPT",
@@ -107,6 +102,7 @@ def sign_in(site_config, cookie):
     通用的签到函数
     :param site_config: 站点配置字典
     :param cookie: 对应站点的cookie字符串
+    :return: 包含签到结果的字典
     """
     site_name = site_config["name"]
     logger.info(f"开始为站点 [{site_name}] 执行签到...")
@@ -128,23 +124,21 @@ def sign_in(site_config, cookie):
                 timeout=15,
                 verify=False
             )
-            response.raise_for_status()  # 如果状态码不是200, 抛出异常
+            response.raise_for_status()
 
             rsp_text = response.text
             msg = ""
 
             if "这是您的第" in rsp_text:
-                msg += '🎉 签到成功!\n'
+                msg += '🎉 签到成功! '
 
-                # 提取魔力值
                 magic_keyword = site_config["magic_keyword"]
                 magic_pattern = rf"{magic_keyword}.*?(\d+(?:,\d+)*(?:\.\d+)?)"
                 magic_match = re.search(magic_pattern, rsp_text)
                 if magic_match:
                     magic_value = magic_match.group(1).replace(',', '')
-                    msg += f"当前{magic_keyword}为: {magic_value}。\n"
+                    msg += f"当前{magic_keyword}为: {magic_value}。 "
 
-                # 提取签到天数和排名
                 pattern = r'这是您的第 <b>(\d+)</b>[\s\S]*?今日签到排名：<b>(\d+)</b>'
                 result_match = re.search(pattern, rsp_text)
                 if result_match:
@@ -155,19 +149,25 @@ def sign_in(site_config, cookie):
                     ).replace('<span style="float:right">', "")
                     msg += result
 
-                logger.info(f"🎉 [{site_name}] {msg.strip()}")
-                send(f"{site_name} 签到成功", msg)
-                return True  # 签到成功，退出循环
+                logger.info(f"✅ [{site_name}] {msg.strip()}")
+                return {
+                    'site': site_name,
+                    'status': '✅ 成功',
+                    'message': msg.strip()
+                }
 
             elif "https://www.gov.cn/" in rsp_text:
                 msg = "Cookie值错误! 响应跳转到第三方网站, 请检查网站cookie值"
                 logger.error(f"❌ [{site_name}] {msg}")
-                send(f"{site_name} 签到失败", msg)
-                return False  # Cookie错误，无需重试
+                return {
+                    'site': site_name,
+                    'status': '🍪 Cookie失效',
+                    'message': msg
+                }
 
             elif ("503 Service Temporarily" in rsp_text or
                   "502 Bad Gateway" in rsp_text):
-                msg = "服务器异常！"
+                msg = "服务器异常 (50x)！"
                 logger.warning(f"⚠️ [{site_name}] {msg}")
 
             else:
@@ -178,17 +178,38 @@ def sign_in(site_config, cookie):
             msg = f"请求失败，原因: {e}"
             logger.error(f"❌ [{site_name}] {msg}")
 
-        # 如果需要重试
         retries += 1
         if retries < max_retries:
             logger.info(f"[{site_name}] 等待20秒后进行重试...")
             time.sleep(20)
 
-    # 循环结束，如果还未成功
     final_msg = f"达到最大重试次数({max_retries}次)，签到失败。"
     logger.error(f"❌ [{site_name}] {final_msg}")
-    send(f"{site_name} 签到失败", final_msg)
-    return False
+    return {
+        'site': site_name,
+        'status': '❌ 失败',
+        'message': final_msg
+    }
+
+
+def format_and_send_notification(results):
+    """
+    格式化签到结果为Markdown表格并发送通知
+    :param results: 签到结果列表
+    """
+    if not results:
+        logger.info("没有签到结果，无需发送通知。")
+        return
+
+    markdown_content = "| 站点 | 状态 | 详情 |\n| :--- | :--- | :--- |\n"
+    for res in results:
+        markdown_content += (
+            f"| {res['site']} | {res['status']} | {res['message']} |\n"
+        )
+
+    logger.info("准备发送汇总通知...")
+    send("PT多站签到报告", markdown_content)
+    logger.info("汇总通知已发送。")
 
 
 def main():
@@ -199,17 +220,25 @@ def main():
         logger.error("❌ 任务终止，无法获取Cookies。")
         return
 
+    results = []
     for site in SITES_CONFIG:
         site_name = site["name"]
         if site_name in all_cookies:
             cookie = all_cookies[site_name]
-            sign_in(site, cookie)
+            result = sign_in(site, cookie)
+            results.append(result)
         else:
-            logger.warning(f"⚠️ 未在环境变量中找到站点 [{site_name}] 的Cookie配置，跳过该站点。")
+            msg = "未在环境变量中找到Cookie配置，跳过该站点。"
+            logger.warning(f"⚠️ [{site_name}] {msg}")
+            results.append({
+                'site': site_name,
+                'status': '🟡 跳过',
+                'message': msg
+            })
 
-        # 每个站点签到后稍微停顿一下
         time.sleep(2)
 
+    format_and_send_notification(results)
     logger.info("===== 所有站点签到任务执行完毕 =====")
 
 
