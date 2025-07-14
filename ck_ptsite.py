@@ -113,6 +113,15 @@ SITES_CONFIG = [
             'authority': 'hdtime.org',
             'referer': 'https://hdtime.org/attendance.php',
         }
+    },
+    {
+        "name": "siqi",
+        "sign_in_url": "https://si-qi.xyz/attendance.php",
+        "magic_keyword": "魔力值",
+        "headers": {
+            'authority': 'si-qi.xyz',
+            'referer': 'https://si-qi.xyz/attendance.php',
+        }
     }
 ]
 
