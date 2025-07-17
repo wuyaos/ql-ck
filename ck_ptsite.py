@@ -262,65 +262,39 @@ def sign_in(site_config, cookie):
 
 def format_and_send_notification(results):
     """
-    格式化签到结果为纯文本表格并发送通知
+    格式化签到结果并发送通知
     :param results: 签到结果列表
     """
     if not results:
         logger.info("没有签到结果，无需发送通知。")
         return
 
-    header = {'site': '站点', 'status': '状态', 'message': '详情'}
-    
     # 过滤掉None的结果
     valid_results = [res for res in results if res is not None]
     if not valid_results:
         logger.info("所有任务均已跳过，无需发送通知。")
         return
 
-    # 准备用于计算宽度的数据
-    data_for_width_calc = [header] + valid_results
-
-    # 计算每列的最大宽度
-    col_widths = {key: 0 for key in header}
-    for item in data_for_width_calc:
-        for key in header:
-            # 使用len()计算字符数
-            length = len(str(item.get(key, '')))
-            if length > col_widths[key]:
-                col_widths[key] = length
-
     # 构建纯文本内容
     content_lines = []
 
-    # 标题行
-    header_line = (
-        f"{header['site'].ljust(col_widths['site'])}   "
-        f"{header['status'].ljust(col_widths['status'])}   "
-        f"{header['message'].ljust(col_widths['message'])}"
+    text = (
+        f"📢 执行结果\n"
+        f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
     )
-    content_lines.append(header_line)
 
-    # 分隔线
-    separator = (
-        f"{'-' * col_widths['site']}   "
-        f"{'-' * col_widths['status']}   "
-        f"{'-' * col_widths['message']}"
-    )
-    content_lines.append(separator)
-
+    content_lines.append(text)
+    
     # 数据行
     for res in valid_results:
-        line = (
-            f"{str(res['site']).ljust(col_widths['site'])}   "
-            f"{str(res['status']).ljust(col_widths['status'])}   "
-            f"{str(res['message']).ljust(col_widths['message'])}"
-        )
+        line = f"{res['site']}:\t{res['status']}\t📢{res['message']}\n━━━━━━━━━━━━━━━━━━━━"
         content_lines.append(line)
 
     plain_text_content = "\n".join(content_lines)
 
     logger.info("准备发送汇总通知...")
-    send("PT多站签到报告", plain_text_content)
+    send("【PT多站签到报告】", plain_text_content)
     logger.info("汇总通知已发送。")
 
 
@@ -336,7 +310,7 @@ def main():
     results = []
     for site in SITES_CONFIG:
         site_name = site["name"]
-        
+
         if check_if_signed_today(site_name):
             msg = "今日已成功签到，跳过。"
             logger.info(f"🟢 [{site_name}] {msg}")
