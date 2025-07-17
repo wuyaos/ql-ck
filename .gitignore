@@ -1,1 +1,9 @@
 .history/
+
+# Augment files
+.augment/
+.augment-cache/
+augment.config.json
+.augment.json
+*.augment
+.augment-*
