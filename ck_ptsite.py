@@ -2,6 +2,60 @@
 """
 cron: 0 10,16,22 * * *
 new Env('PT多站签到');
+
+================================================================================
+脚本使用说明:
+本脚本通过单一环境变量 `PT_CHECKIN_CONFIG` 进行配置，该变量必须是一个有效的JSON字符串。
+
+核心配置结构:
+{
+  "cookie_cloud": { ... }, // 可选，CookieCloud凭据
+  "sites": { ... }        // 必需，要签到的站点
+}
+
+一、 `sites` 对象 (必需)
+--------------------------------------------------------------------------------
+`sites` 是一个JSON对象，"键" 是站点名称 (必须与脚本内置的SITES_CONFIG匹配)，
+"值" 决定了如何获取该站点的Cookie:
+
+1.  **使用 CookieCloud**:
+    将站点的值设置为 `""` (空字符串) 或 `null`。
+    脚本会自动从 CookieCloud 获取对应域名的 Cookie。
+
+    示例: "GGPT": ""
+
+2.  **直接提供 Cookie**:
+    将站点的值设置为一个**非空字符串**，这个字符串就是该站点的Cookie。
+
+    示例: "siqi": "uid=789; pass=xyz;"
+
+二、 `cookie_cloud` 对象 (可选)
+--------------------------------------------------------------------------------
+如果 `sites` 对象中**至少有一个**站点配置为使用 CookieCloud，则此 `cookie_cloud`
+键是必需的。
+
+`cookie_cloud` 对象包含以下三个键:
+- `url`: CookieCloud 服务的 URL (例如: "http://192.168.1.2:8088")
+- `uuid`: 你的用户 UUID
+- `password`: 你的加密密码
+
+---
+完整配置示例:
+{
+  "cookie_cloud": {
+    "url": "http://your-cc-url.com",
+    "uuid": "your-uuid",
+    "password": "your-password"
+  },
+  "sites": {
+    "GGPT": "",                // 此站点将使用 CookieCloud
+    "HDtime": null,            // 此站点也将使用 CookieCloud
+    "siqi": "uid=789; pass=xyz;" // 此站点使用直接提供的 Cookie
+  }
+}
+
+如果所有站点都直接提供Cookie，`cookie_cloud` 键可以省略。
+================================================================================
 """
 
 import requests
@@ -14,6 +68,7 @@ from loguru import logger
 import sys
 import sqlite3
 from datetime import datetime
+from urllib.parse import urlparse
 
 # 数据库文件名
 DB_FILE = "checkin_status.db"
@@ -29,6 +84,161 @@ log_format = (
     "<level>{message}</level>"
 )
 logger.add(sys.stdout, format=log_format)
+
+
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# CookieCloud 相关代码
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+try:
+    from PyCookieCloud import PyCookieCloud
+except ImportError:
+    PyCookieCloud = None
+    logger.warning("⚠️ PyCookieCloud 模块未安装，CookieCloud功能将不可用。")
+    logger.warning("请执行 `pip install PyCookieCloud` 进行安装。")
+
+
+class CookieCloud:
+    def __init__(self, url: str, uuid: str, password: str):
+        if PyCookieCloud is None:
+            raise ImportError("PyCookieCloud 模块未安装，无法初始化 CookieCloud。")
+        self.client = PyCookieCloud(url, uuid, password)
+        self.cookies: dict | None = None
+
+    def _fetch_all_cookies(self):
+        logger.info('☁️ 从 CookieCloud 获取所有 cookies...')
+        try:
+            decrypted_data = self.client.get_decrypted_data()
+            if not decrypted_data:
+                logger.error('❌ 从 CookieCloud 解密数据失败。')
+                self.cookies = {}
+                return
+
+            self.cookies = self._process_cookies(decrypted_data)
+            logger.success('✅ 成功从 CookieCloud 获取所有 cookies。')
+        except Exception as e:
+            logger.error(f'❌ 从 CookieCloud 获取所有 cookies 时发生错误: {e}')
+            self.cookies = {}
+
+    def _process_cookies(self, decrypted_data: dict) -> dict:
+        processed_cookies = {}
+        for domain, content_list in decrypted_data.items():
+            if not content_list or all(
+                c.get("name") == "cf_clearance" for c in content_list
+            ):
+                continue
+
+            cookie_list = [
+                f"{c.get('name')}={c.get('value')}"
+                for c in content_list if c.get("name") and c.get("value")
+            ]
+
+            if domain.startswith('.'):
+                domain = domain[1:]
+            processed_cookies[domain] = "; ".join(cookie_list)
+        return processed_cookies
+
+    def get_cookies(self, domain: str) -> str | None:
+        """
+        Get cookies from CookieCloud for a specific domain.
+        :param domain: The domain to get cookies for.
+        :return: A string of cookies, or None if not found.
+        """
+        if isinstance(domain, bytes):
+            try:
+                domain = domain.decode('utf-8')
+            except UnicodeDecodeError:
+                logger.warning('⚠️ 域名解码失败，无法获取 cookies。')
+                return None
+
+        if not domain:
+            logger.warning('⚠️ 无效或空的域名，无法获取 cookies。')
+            return None
+
+        if self.cookies is None:
+            self._fetch_all_cookies()
+
+        if not self.cookies:
+            logger.warning('⚠️ 在 CookieCloud 中未找到任何 cookies。')
+            return None
+
+        # Direct match
+        if cookie := self.cookies.get(domain):
+            logger.success(f'✅ 成功获取域名 {domain} 的 cookies。')
+            return cookie
+
+        # Subdomain match
+        for d, c in self.cookies.items():
+            if domain.endswith(d):
+                logger.info(f"🔍 在 {domain} 未找到 cookie，但在 {d} 找到了。")
+                return c
+
+        logger.warning(f'⚠️ 未找到域名 {domain} 的 cookies。')
+        return None
+
+
+def load_configuration():
+    """
+    从环境变量 PT_CHECKIN_CONFIG 加载并解析统一的配置。
+    :return: 一个元组 (cookie_manager, sites_to_checkin)。
+             cookie_manager: CookieCloud实例或None。
+             sites_to_checkin: 站点配置字典或None。
+    """
+    config_str = os.getenv("PT_CHECKIN_CONFIG")
+    if not config_str:
+        logger.error("❌ 环境变量 `PT_CHECKIN_CONFIG` 未设置！")
+        return None, None
+
+    try:
+        config = json.loads(config_str)
+    except json.JSONDecodeError:
+        logger.error("❌ `PT_CHECKIN_CONFIG` 环境变量格式错误，不是有效的JSON。")
+        return None, None
+
+    if 'sites' not in config or not isinstance(config['sites'], dict):
+        logger.error("❌ 配置中缺少 'sites' 键，或其值不是一个对象。")
+        return None, None
+
+    sites_to_checkin = config['sites']
+    cookie_manager = None
+
+    # 检查是否有站点需要使用CookieCloud
+    needs_cc = any(
+        not value for value in sites_to_checkin.values()
+    )
+
+    if needs_cc:
+        logger.info("☁️ 检测到需要使用 CookieCloud 的站点。")
+        if PyCookieCloud is None:
+            logger.error("❌ 配置了使用CookieCloud，但PyCookieCloud模块未安装。")
+            return None, None
+
+        cc_config = config.get('cookie_cloud')
+        if not cc_config:
+            logger.error("❌ 配置了使用CookieCloud，但缺少 'cookie_cloud' 配置块。")
+            return None, None
+
+        url = cc_config.get('url')
+        uuid = cc_config.get('uuid')
+        password = cc_config.get('password')
+
+        if not (url and uuid and password):
+            logger.error("❌ CookieCloud 配置不完整 (需要 url, uuid, password)。")
+            return None, None
+
+        try:
+            cookie_manager = CookieCloud(url, uuid, password)
+            logger.info("✅ CookieCloud 管理器初始化成功。")
+        except ImportError as e:
+            logger.error(f"❌ 初始化 CookieCloud 失败: {e}")
+            return None, None
+
+    logger.info("✅ 配置加载成功。")
+    return cookie_manager, sites_to_checkin
+
+
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# 数据库和签到逻辑
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 
 def init_db():
@@ -151,19 +361,6 @@ COMMON_HEADERS = {
 }
 
 
-def get_cookies_from_env():
-    """从环境变量 PT_COOKIES 中获取 cookies"""
-    cookies_str = os.getenv("PT_COOKIES")
-    if not cookies_str:
-        logger.error("❌ 环境变量 `PT_COOKIES` 未设置！")
-        return None
-    try:
-        return json.loads(cookies_str)
-    except json.JSONDecodeError:
-        logger.error("❌ `PT_COOKIES` 环境变量格式错误，不是有效的JSON。")
-        return None
-
-
 def sign_in(site_config, cookie):
     """
     通用的签到函数
@@ -207,7 +404,10 @@ def sign_in(site_config, cookie):
                     magic_value = magic_match.group(1).replace(',', '')
                     msg += f"当前{magic_keyword}为: {magic_value}。 "
 
-                pattern = r'这是您的第 <b>(\d+)</b>[\s\S]*?今日签到排名：<b>(\d+)</b>'
+                pattern = (
+                    r'这是您的第 <b>(\d+)</b>[\s\S]*?'
+                    r'今日签到排名：<b>(\d+)</b>'
+                )
                 result_match = re.search(pattern, rsp_text)
                 if result_match:
                     result = result_match.group(0)
@@ -269,26 +469,24 @@ def format_and_send_notification(results):
         logger.info("没有签到结果，无需发送通知。")
         return
 
-    # 过滤掉None的结果
     valid_results = [res for res in results if res is not None]
     if not valid_results:
         logger.info("所有任务均已跳过，无需发送通知。")
         return
 
-    # 构建纯文本内容
     content_lines = []
-
     text = (
         f"📢 执行结果\n"
-        f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"━━━━━━━━━━━━━━━━━━━━"
+        f"🕐 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
-
     content_lines.append(text)
-    
-    # 数据行
+
     for res in valid_results:
-        line = f"{res['site']}:\t{res['status']}\t📢{res['message']}\n━━━━━━━━━━━━━━━━━━━━"
+        line = (
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"{res['site']}:\t\t{res['status']}\n"
+            f"📢{res['message']}"
+        )
         content_lines.append(line)
 
     plain_text_content = "\n".join(content_lines)
@@ -300,16 +498,23 @@ def format_and_send_notification(results):
 
 def main():
     logger.info("===== 开始执行PT站签到任务 =====")
-    init_db()  # 初始化数据库
-    all_cookies = get_cookies_from_env()
+    init_db()
+    cookie_manager, sites_to_checkin = load_configuration()
 
-    if not all_cookies:
-        logger.error("❌ 任务终止，无法获取Cookies。")
+    if not sites_to_checkin:
+        logger.error("❌ 任务终止，无法获取任何有效的站点配置。")
         return
 
+    # 将SITES_CONFIG转换为字典以便快速查找
+    site_config_map = {s['name']: s for s in SITES_CONFIG}
     results = []
-    for site in SITES_CONFIG:
-        site_name = site["name"]
+
+    for site_name, cookie_value in sites_to_checkin.items():
+        if site_name not in site_config_map:
+            logger.warning(f"⚠️ 发现未知站点配置 '{site_name}'，已跳过。")
+            continue
+
+        site_config = site_config_map[site_name]
 
         if check_if_signed_today(site_name):
             msg = "今日已成功签到，跳过。"
@@ -321,18 +526,37 @@ def main():
             })
             continue
 
-        if site_name in all_cookies:
-            cookie = all_cookies[site_name]
-            result = sign_in(site, cookie)
-            results.append(result)
+        cookie = None
+        # 如果cookie_value是真值(非空字符串)，则直接使用
+        if cookie_value:
+            cookie = cookie_value
+        # 否则，尝试从CookieCloud获取
+        elif cookie_manager:
+            domain = urlparse(site_config['sign_in_url']).netloc
+            cookie = cookie_manager.get_cookies(domain)
+            if not cookie:
+                msg = f"未能从CookieCloud获取到 {domain} 的Cookie，跳过该站点。"
+                logger.warning(f"⚠️ [{site_name}] {msg}")
+                results.append({
+                    'site': site_name,
+                    'status': '🟡 跳过',
+                    'message': msg
+                })
+                continue
+        # 既没有直接提供cookie，也没有cookie_manager
         else:
-            msg = "未在环境变量中找到Cookie配置，跳过该站点。"
+            msg = f"站点 {site_name} 未提供直接的Cookie，且未配置CookieCloud，跳过。"
             logger.warning(f"⚠️ [{site_name}] {msg}")
             results.append({
                 'site': site_name,
                 'status': '🟡 跳过',
                 'message': msg
             })
+            continue
+
+        if cookie:
+            result = sign_in(site_config, cookie)
+            results.append(result)
 
         time.sleep(2)
 
